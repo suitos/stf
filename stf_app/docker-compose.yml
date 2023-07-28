@@ -1,0 +1,223 @@
+version: '3'
+
+services:
+
+  nginx:
+    build: nginx/
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    networks:
+      - stf
+    depends_on:
+      - app
+      - auth-ldap
+      - storage-plugin-apk
+      - storage-plugin-image
+      - storage-temp
+      - websocket
+      - api
+
+  rethinkdb:
+    container_name: rethinkdb
+    image: rethinkdb:2.4.2
+    restart: unless-stopped
+    volumes:
+      - "rethinkdb-data:/data"
+    command: "rethinkdb --bind all --cache-size 2048"
+    networks:
+      - stf
+    ports:
+      - "8081:8080"
+
+  adb:
+    container_name: adb
+    image: devicefarmer/adb:latest
+    restart: unless-stopped
+    volumes:
+      - "/dev/bus/usb:/dev/bus/usb"
+    privileged: true
+    networks:
+      - stf
+  
+  app:
+    container_name: app
+    image: devicefarmer/stf
+    restart: unless-stopped
+    environment:
+      - RETHINKDB_PORT_28015_TCP=tcp://rethinkdb:28015
+      - SECRET
+      - STF_ADMIN_NAME=sinhyekim
+      - STF_ADMIN_EMAIL=sinhyekim@rsupport.com
+    depends_on:
+      - rethinkdb
+      - websocket
+    ports:
+      - "3000:3000"
+    command: stf app
+              --auth-url http://${PUBLIC_IP}/auth/ldap/
+              --websocket-url ws://${PUBLIC_IP}
+              --port 3000
+    networks:
+      - stf
+
+  triproxy:
+    container_name: triproxy
+    image: devicefarmer/stf
+    restart: unless-stopped
+    command: stf triproxy app --bind-pub "tcp://*:7150"
+              --bind-dealer "tcp://*:7160"
+              --bind-pull "tcp://*:7170"
+    networks:
+      - stf
+    ports:
+      - "7150:7150"
+      - "7170:7170"
+
+  dev-triproxy:
+    container_name: dev-triproxy
+    image: devicefarmer/stf
+    restart: unless-stopped
+    command: stf triproxy dev --bind-pub "tcp://*:7250"
+              --bind-dealer "tcp://*:7260"
+              --bind-pull "tcp://*:7270"
+    networks:
+      - stf
+    ports:
+      - "7250:7250"
+      - "7270:7270"
+
+  migrate:
+    image: devicefarmer/stf
+    networks:
+      - stf
+    environment:
+      - RETHINKDB_PORT_28015_TCP=tcp://rethinkdb:28015 
+    command: stf migrate
+    depends_on:
+      - rethinkdb
+
+  processor:
+    container_name: processor
+    image: devicefarmer/stf
+    restart: unless-stopped
+    environment:
+      - RETHINKDB_PORT_28015_TCP=tcp://rethinkdb:28015
+    depends_on:
+      - rethinkdb
+      - triproxy
+      - dev-triproxy
+    networks:
+      - stf
+    command: stf processor --connect-app-dealer tcp://triproxy:7160 --connect-dev-dealer tcp://dev-triproxy:7260
+
+  reaper:
+    container_name: reaper
+    image: devicefarmer/stf
+    restart: unless-stopped
+    environment:
+      - RETHINKDB_PORT_28015_TCP=tcp://rethinkdb:28015
+    networks:
+      - stf
+    command: stf reaper dev --connect-push tcp://dev-triproxy:7270 --connect-sub tcp://triproxy:7150
+
+  auth-ldap:
+    container_name: auth-ldap
+    image: devicefarmer/stf
+    restart: unless-stopped
+    networks:
+      - stf
+    environment:
+      - RETHINKDB_PORT_28015_TCP=tcp://rethinkdb:28015
+      - SECRET
+      - STF_AUTH_LDAP_LDAP_BIND_CREDENTIALS=admin
+      - STF_AUTH_LDAP_LDAP_BIND_DN=CN=admin,DC=rsup,DC=com
+      - STF_AUTH_LDAP_LDAP_SEARCH_DN=DC=rsup,DC=com
+      - STF_AUTH_LDAP_LDAP_URL=ldap://openldap
+      - STF_AUTH_LDAP_LDAP_SEARCH_FIELD=cn
+    command: stf auth-ldap --app-url http://${PUBLIC_IP} --port 3000
+
+  api:
+    container_name: api
+    image: devicefarmer/stf
+    restart: unless-stopped
+    environment:
+      - RETHINKDB_PORT_28015_TCP=tcp://rethinkdb:28015
+      - SECRET
+    networks:
+      - stf
+    command: stf api --port 3000
+              --connect-push tcp://triproxy:7170
+              --connect-sub tcp://triproxy:7150
+              --connect-push-dev tcp://dev-triproxy:7270
+              --connect-sub-dev tcp://dev-triproxy:7114
+
+  websocket:
+    container_name: websocket
+    image: devicefarmer/stf
+    restart: unless-stopped
+    environment:
+      - RETHINKDB_PORT_28015_TCP=tcp://rethinkdb:28015
+      - SECRET
+    command: stf websocket --port 3000
+              --storage-url http://${PUBLIC_IP} 
+              --connect-sub tcp://triproxy:7150 
+              --connect-push tcp://triproxy:7170
+    networks:
+      - stf
+    
+  storage-temp:
+    container_name: storage-temp
+    image: devicefarmer/stf
+    restart: unless-stopped
+    networks:
+      - stf
+    command: stf storage-temp --port 3000
+
+  storage-plugin-image:
+    container_name: storage-plugin-image
+    image: devicefarmer/stf
+    restart: unless-stopped
+    networks:
+      - stf
+    command: stf storage-plugin-image --port 3000 --storage-url http://${PUBLIC_IP}
+
+  storage-plugin-apk:
+    container_name: storage-plugin-apk
+    image: devicefarmer/stf
+    restart: unless-stopped
+    networks:
+      - stf
+    command: stf storage-plugin-apk --port 3000 --storage-url http://${PUBLIC_IP}
+
+  privider:
+    image: devicefarmer/stf
+    restart: unless-stopped
+    command: stf provider --name test_provider 
+              --connect-sub tcp://dev-triproxy:7250 
+              --connect-push tcp://dev-triproxy:7270 
+              --storage-url http://${PUBLIC_IP}/ 
+              --public-ip ${PUBLIC_IP} 
+              --heartbeat-interval 10000 
+              --adb-host adb 
+              --min-port 7400 
+              --max-port 7500 
+              --allow-remote
+    networks:
+      - stf
+    ports: 
+      - "7400-7500:7400-7500"
+    depends_on:
+      - adb
+      - dev-triproxy
+      - triproxy
+      - storage-temp
+
+volumes:
+  rethinkdb-data: {}
+
+networks:
+  stf:
+    external: true
