@@ -192,7 +192,7 @@ services:
       - stf
     command: stf storage-plugin-apk --port 3000 --storage-url http://${PUBLIC_IP}
 
-  privider:
+  provider:
     image: devicefarmer/stf
     restart: unless-stopped
     command: stf provider --name test_provider 
