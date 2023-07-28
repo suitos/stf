@@ -3,10 +3,8 @@
 
 
 ## Getting started
+qi팀 stf(Smartphone device farm) 구축용 docker 문서입니다.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
 
 ## Add your files
 
