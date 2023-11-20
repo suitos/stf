@@ -1,0 +1,38 @@
+version: '3'
+
+services:
+  adb:
+    container_name: adb
+    image: devicefarmer/adb:latest
+    restart: unless-stopped
+    volumes:
+      - "/dev/bus/usb:/dev/bus/usb"
+    privileged: true
+    networks:
+      - stf
+
+  stf_provider:
+    container_name: stf_provider
+    image: devicefarmer/stf
+    ports:
+      - "7400-7500:7400-7500"
+    restart: unless-stopped
+    command: stf provider --name test_provider1
+              --connect-sub tcp://10.1.101.188:7250
+              --connect-push tcp://10.1.101.188:7270
+              --storage-url http://10.1.101.188
+              --public-ip 10.1.101.184
+              --screen-ws-url-pattern "ws://10.1.101.182/d/provider1/<%= serial %>/<%= publicPort %>/"
+              --heartbeat-interval 10000
+              --adb-host adb
+              --allow-remote
+              --min-port 7400
+              --max-port 7405
+    depends_on:
+      - adb
+    networks:
+      - stf
+
+networks:
+    stf:
+      external: true
